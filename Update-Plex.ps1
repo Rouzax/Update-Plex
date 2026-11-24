@@ -201,7 +201,7 @@ $Script:SignerPattern    = '^CN="?Plex, Inc\.?"?,'
 $Script:BackupRoot       = Join-Path $env:ProgramData 'Plex\UpdateBackups'
 $Script:LockFile         = Join-Path $env:ProgramData 'Plex\update.lock'
 $Script:MinDiskSpaceGB   = 3
-$Script:MinInstallerMB   = 50    # Sanity check: the real installer is about 150 MB
+$Script:MinInstallerMB   = 50    # Sanity check: the real installer is about 90 MB
 $Script:LocalUrl         = 'http://127.0.0.1:32400'
 $Script:UserAgent        = 'Plex-AutoUpdater/1.0 (PowerShell)'
 # Every process a running Plex has; all of them must be gone before files are replaced.
