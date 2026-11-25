@@ -27,7 +27,10 @@ for such a service install; this script replaces it.
 - **Health check.** Plex must answer `/identity` with the same server identity
   and the new version.
 - Timestamped logs with rotation, a lock file against overlapping runs, and
-  Pushover notifications for success, rollback and failure.
+  Pushover notifications for success, rollback and failure. The success
+  message lists the release's added and fixed items (as many as fit in
+  Pushover's 1024 characters, then "and N more") and links to Plex's release
+  notes thread.
 
 ## Requirements
 

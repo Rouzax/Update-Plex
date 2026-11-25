@@ -196,6 +196,8 @@ if (Test-Path $Script:ConfigPath) {
 #region -- Constants ----------------------------------------------------------
 
 $Script:DownloadsApiUrl  = 'https://plex.tv/api/downloads/5.json'
+# Pushover rejects a longer message.
+$Script:PushoverMessageLimit = 1024
 $Script:ReleaseBuild     = 'windows-x86_64'
 $Script:SignerPattern    = '^CN="?Plex, Inc\.?"?,'
 $Script:BackupRoot       = Join-Path $env:ProgramData 'Plex\UpdateBackups'
@@ -573,12 +575,76 @@ function Select-PlexRelease {
     if ($windows.PSObject.Properties['release_date'] -and $windows.release_date) {
         $released = [DateTimeOffset]::FromUnixTimeSeconds([long]$windows.release_date).LocalDateTime
     }
+    $added = @(); $fixed = @()
+    if ($windows.PSObject.Properties['items_added']) { $added = ConvertTo-ReleaseNoteList -Text ([string]$windows.items_added) }
+    if ($windows.PSObject.Properties['items_fixed']) { $fixed = ConvertTo-ReleaseNoteList -Text ([string]$windows.items_fixed) }
     return [pscustomobject]@{
         Version  = [string]$windows.version
         Url      = [string]$build.url
         Sha1     = ([string]$build.checksum).ToLowerInvariant()
         Released = $released
+        Added    = $added
+        Fixed    = $fixed
     }
+}
+
+function ConvertTo-ReleaseNoteList {
+    <#
+        One release note per line of the downloads API's items_added or
+        items_fixed text, without the trailing internal ticket number
+        ("(PM-1234)"), which means nothing to a reader.
+    #>
+    param([AllowEmptyString()][string]$Text)
+
+    $items = @(foreach ($line in ($Text -split '\r?\n')) {
+            $item = ($line -replace '\s*\(PM-\d+\)\s*$', '').Trim()
+            if ($item) { $item }
+        })
+    return , $items
+}
+
+function Format-ReleaseNote {
+    <#
+        The release notes as Pushover HTML, an "Added" and a "Fixed" list,
+        cut to MaxLength characters. Items stay in order; once one does not
+        fit, the rest are counted in a closing "and N more" line, so the
+        message never ends mid-item. Returns '' when there is nothing to say
+        or no room for it.
+    #>
+    param(
+        [AllowEmptyCollection()][string[]]$Added = @(),
+        [AllowEmptyCollection()][string[]]$Fixed = @(),
+        [Parameter(Mandatory)][int]$MaxLength
+    )
+
+    $entries = @()
+    foreach ($item in $Added) { $entries += [pscustomobject]@{ Section = 'Added'; Text = $item } }
+    foreach ($item in $Fixed) { $entries += [pscustomobject]@{ Section = 'Fixed'; Text = $item } }
+    if ($entries.Count -eq 0) { return '' }
+
+    # Room kept for the closing line while more items may follow.
+    $reserve = '<br>&#8230; and 999 more in the release notes'.Length
+    $out = ''
+    $section = ''
+    $shown = 0
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        $entry = $entries[$i]
+        $piece = ''
+        if ($entry.Section -ne $section) { $piece += "<br><br><b>$($entry.Section)</b>" }
+        $piece += '<br>&#8226; ' + [System.Net.WebUtility]::HtmlEncode($entry.Text)
+        $isLast = $i -eq $entries.Count - 1
+        $limit = if ($isLast) { $MaxLength } else { $MaxLength - $reserve }
+        if (($out.Length + $piece.Length) -gt $limit) { break }
+        $out += $piece
+        $section = $entry.Section
+        $shown++
+    }
+    $left = $entries.Count - $shown
+    if ($left -gt 0) {
+        if ($shown -eq 0) { return '' }
+        $out += "<br>&#8230; and $left more in the release notes"
+    }
+    return $out
 }
 
 function Get-LatestRelease {
@@ -1138,14 +1204,14 @@ function Invoke-PlexUpdate {
 
         $newVersion = Get-InstalledVersion
         Write-UpdateLog "Update successful: $installedVersion -> $newVersion" -Level SUCCESS
+        $message = "<b>$env:COMPUTERNAME</b> updated successfully ($($release.Channel) channel)" +
+            "<br><b>Previous:</b> $installedVersion" +
+            "<br><b>New:</b> $newVersion" +
+            "<br><b>Duration:</b> $([math]::Round(((Get-Date) - (Get-Item $Script:LogFile).CreationTime).TotalSeconds))s"
+        $message += Format-ReleaseNote -Added $release.Added -Fixed $release.Fixed -MaxLength ($Script:PushoverMessageLimit - $message.Length)
         Send-PushoverNotification -Type 'Success' `
             -Title "Plex updated to $newVersion" `
-            -Message (
-                "<b>$env:COMPUTERNAME</b> updated successfully ($($release.Channel) channel)" +
-                "<br><b>Previous:</b> $installedVersion" +
-                "<br><b>New:</b> $newVersion" +
-                "<br><b>Duration:</b> $([math]::Round(((Get-Date) - (Get-Item $Script:LogFile).CreationTime).TotalSeconds))s"
-            ) `
+            -Message $message `
             -Url 'https://forums.plex.tv/t/plex-media-server/30447' `
             -UrlTitle 'Release Notes'
 

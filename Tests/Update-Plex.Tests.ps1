@@ -15,6 +15,8 @@ BeforeAll {
                 id           = 'windows'
                 version      = '1.43.6.11212-fa660d0cd'
                 release_date = 1795392000
+                items_added  = "(Music) Read the record label from NFO files (PM-3800)`nUpdated Web to 4.162.1"
+                items_fixed  = '(Transcoder) A crash with audio-only media (PM-6226)'
                 releases     = @(
                     [pscustomobject]@{ build = 'windows-x86'; distro = 'windows'; url = 'https://downloads.plex.tv/x86.exe'; checksum = 'AAAA' }
                     [pscustomobject]@{ build = 'windows-x86_64'; distro = 'windows'; url = 'https://downloads.plex.tv/plex-media-server-new/1.43.6.11212-fa660d0cd/windows/PlexMediaServer-1.43.6.11212-fa660d0cd-x86_64.exe'; checksum = '302C7F700B5BC597F50D8FD7D967E25DD2628BB5' }
@@ -119,5 +121,65 @@ Describe 'Select-PlexRelease' {
 
     It 'returns nothing for a response without Windows' {
         Select-PlexRelease -Response ([pscustomobject]@{ computer = [pscustomobject]@{ Linux = @{} } }) | Should -BeNullOrEmpty
+    }
+
+    It 'carries the release notes, one item per line' {
+        $r = Select-PlexRelease -Response $script:Response
+        $r.Added | Should -Be @('(Music) Read the record label from NFO files', 'Updated Web to 4.162.1')
+        $r.Fixed | Should -Be @('(Transcoder) A crash with audio-only media')
+    }
+
+    It 'gives empty lists when the response has no release notes' {
+        $resp = [pscustomobject]@{ computer = [pscustomobject]@{ Windows = [pscustomobject]@{ version = '1.0'; releases = @([pscustomobject]@{ build = 'windows-x86_64'; url = 'u'; checksum = 'c' }) } } }
+        $r = Select-PlexRelease -Response $resp
+        @($r.Added).Count | Should -Be 0
+        @($r.Fixed).Count | Should -Be 0
+    }
+}
+
+Describe 'ConvertTo-ReleaseNoteList' {
+
+    It 'splits on line breaks, drops blank lines and the ticket number' {
+        $list = ConvertTo-ReleaseNoteList -Text "(DVR) First fix (PM-5538)`r`n`n  Second item  `nThird (PM-12)"
+        $list | Should -Be @('(DVR) First fix', 'Second item', 'Third')
+    }
+
+    It 'keeps a parenthesis that is not a ticket number' {
+        ConvertTo-ReleaseNoteList -Text 'Faster scans (large libraries)' | Should -Be 'Faster scans (large libraries)'
+    }
+
+    It 'returns an empty list for empty text' {
+        $list = ConvertTo-ReleaseNoteList -Text ''
+        $list.Count | Should -Be 0
+    }
+}
+
+Describe 'Format-ReleaseNote' {
+
+    It 'lists added and fixed items under their headings' {
+        $html = Format-ReleaseNote -Added @('New thing') -Fixed @('Old bug') -MaxLength 1000
+        $html | Should -Be '<br><br><b>Added</b><br>&#8226; New thing<br><br><b>Fixed</b><br>&#8226; Old bug'
+    }
+
+    It 'leaves out an empty section' {
+        Format-ReleaseNote -Fixed @('Old bug') -MaxLength 1000 | Should -Not -Match 'Added'
+    }
+
+    It 'escapes text so it cannot break the HTML' {
+        Format-ReleaseNote -Added @('Use <b> & co') -MaxLength 1000 | Should -Match 'Use &lt;b&gt; &amp; co'
+    }
+
+    It 'stops at a whole item and counts the rest' {
+        $items = 1..40 | ForEach-Object { "Release note number $_ with some words in it" }
+        $html = Format-ReleaseNote -Added $items -MaxLength 400
+        $html.Length | Should -BeLessOrEqual 400
+        $html | Should -Match '&#8230; and (\d+) more in the release notes$'
+        $shown = ([regex]::Matches($html, '&#8226;')).Count
+        [int]($html -replace '.*and (\d+) more.*', '$1') | Should -Be (40 - $shown)
+    }
+
+    It 'returns nothing when there are no notes or no room' {
+        Format-ReleaseNote -MaxLength 1000 | Should -Be ''
+        Format-ReleaseNote -Added @('Something long enough not to fit') -MaxLength 10 | Should -Be ''
     }
 }
